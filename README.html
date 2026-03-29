@@ -1,42 +1,151 @@
-<html>
-<body>
-<h3>Plugin Builder Results</h3>
+# ResumoCamada
 
-Congratulations! You just built a plugin for QGIS!<br/><br />
+Plugin para QGIS que gera um resumo da camada ativa, exibindo informações como quantidade de feições, tipo de geometria, área total e comparação entre áreas, com opção de exportação em CSV e PDF.
 
-<div id='help' style='font-size:.9em;'>
-Your plugin <b>ResumoCamada</b> was created in:<br>
-&nbsp;&nbsp;<b>C:/Users/Dell/Documents/ProjetosQGIS/plugins_QGIS\resumo_camada</b>
-<p>
-Your QGIS plugin directory is located at:<br>
-&nbsp;&nbsp;<b>C:/Users/Dell/AppData/Roaming/QGIS/QGIS3/profiles/default/python/plugins</b>
-<p>
-<h3>What's Next</h3>
-<ol>
-    <li>If resources.py is not present in your plugin directory, compile the resources file using pyrcc5 (simply use <b>pb_tool</b> or <b>make</b> if you have automake)
-    <li>Optionally, test the generated sources using <b>make test</b> (or run tests from your IDE)
-    <li>Copy the entire directory containing your new plugin to the QGIS plugin directory (see Notes below)
-    <li>Test the plugin by enabling it in the QGIS plugin manager
-    <li>Customize it by editing the implementation file <b>resumo_camada.py</b>
-    <li>Create your own custom icon, replacing the default <b>icon.png</b>
-    <li>Modify your user interface by opening <b>resumo_camada_dialog_base.ui</b> in Qt Designer
-</ol>
-Notes:
-<ul>
-    <li>You can use <b>pb_tool</b> to compile, deploy, and manage your plugin. Tweak the <i>pb_tool.cfg</i> file included with your plugin as you add files. Install <b>pb_tool</b> using 
-        <i>pip</i> or <i>easy_install</i>. See <b>http://loc8.cc/pb_tool</b> for more information.
-    <li>You can also use the <b>Makefile</b> to compile and deploy when you
-        make changes. This requires GNU make (gmake). The Makefile is ready to use, however you 
-        will have to edit it to add addional Python source files, dialogs, and translations.
-</ul>
-</div>
-<div style='font-size:.9em;'>
-<p>
-For information on writing PyQGIS code, see <b>http://loc8.cc/pyqgis_resources</b> for a list of resources.
-</p>
-</div>
-<p>
-&copy;2011-2019 GeoApt LLC - geoapt.com 
-</p>
-</body>
-</html>
+## Visão geral
+
+O **ResumoCamada** foi desenvolvido para facilitar a visualização rápida de métricas de uma camada vetorial no QGIS.  
+A proposta do plugin é oferecer uma interface simples e organizada para consultar dados da camada selecionada e gerar relatórios de apoio.
+
+### Funcionalidades
+
+- Exibe o nome da camada ativa.
+- Mostra a quantidade de feições.
+- Identifica o tipo de geometria da camada.
+- Calcula a área total em:
+  - metros quadrados (m²)
+  - hectares (ha)
+  - quilômetros quadrados (km²)
+- Compara áreas quando houver múltiplas feições.
+- Exporta os resultados em **CSV**.
+- Gera relatório em **PDF** com resumo e mapa da área.
+
+## Interface
+
+O plugin possui uma interface gráfica no QGIS com:
+
+- Cabeçalho com informações gerais da camada.
+- Bloco de resumo com métricas principais.
+- Bloco de comparação entre áreas.
+- Botões de ação para:
+  - Exportar CSV
+  - Exportar PDF
+  - Fechar
+
+## Tecnologias utilizadas
+
+- Python 3
+- PyQt
+- QGIS API
+
+## Estrutura do projeto
+
+```bash
+RESUMO_CAMADA/
+├── help/
+├── i18n/
+├── scripts/
+├── test/
+├── __init__.py
+├── camada.qlr
+├── icon.png
+├── Makefile
+├── metadata.txt
+├── pb_tool.cfg
+├── plugin_upload.py
+├── pylintrc
+├── README.html
+├── README.txt
+├── resources.py
+├── resources.qrc
+├── resumo_camada_dialog_base.ui
+├── resumo_camada_dialog.py
+└── resumo_camada.py
+```
+
+## Instalação
+
+### Opção 1: instalar manualmente no QGIS
+
+1. Clone ou baixe este repositório:
+   ```bash
+   git clone https://github.com/seu-usuario/resumo-camada.git
+   ```
+2. Copie a pasta do plugin para o diretório de plugins do QGIS.
+
+No Windows, normalmente:
+```bash
+C:\Users\SEU_USUARIO\AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins
+```
+
+No Linux, normalmente:
+```bash
+~/.local/share/QGIS/QGIS3/profiles/default/python/plugins
+```
+
+3. Abra o QGIS.
+4. Vá em **Complementos > Gerenciar e Instalar Complementos**.
+5. Procure por **ResumoCamada** na lista de plugins instalados localmente.
+6. Ative o plugin.
+
+## Como usar
+
+1. Abra o QGIS.
+2. Carregue uma camada vetorial.
+3. Selecione a camada desejada.
+4. Execute o plugin **ResumoCamada**.
+5. Visualize os dados resumidos na janela principal.
+6. Use os botões para exportar:
+   - **CSV**, para dados tabulares;
+   - **PDF**, para relatório visual com mapa.
+
+## Exportações
+
+### CSV
+O arquivo CSV contém os principais dados resumidos da camada, facilitando análise externa ou integração com outras ferramentas.
+
+### PDF
+O relatório PDF reúne:
+- informações gerais da camada;
+- métricas calculadas;
+- comparação entre áreas;
+- mapa da região analisada.
+
+## Objetivo do projeto
+
+Este plugin foi criado como projeto prático para estudo de desenvolvimento de plugins no QGIS com Python e PyQt, com foco em automação de análises simples e geração de relatórios.
+
+## Melhorias futuras
+
+- Melhorar o layout do PDF.
+- Adicionar suporte a mais tipos de análise.
+- Permitir seleção de feições específicas.
+- Incluir pré-visualização do mapa antes da exportação.
+- Melhorar o tratamento para camadas com muitas feições.
+- Adicionar internacionalização completa.
+
+## Desenvolvimento
+
+Caso queira editar ou evoluir o plugin:
+
+1. Abra a pasta do projeto no VS Code ou outro editor.
+2. Edite os arquivos principais:
+   - `resumo_camada.py` → lógica do plugin
+   - `resumo_camada_dialog.py` → comportamento da interface
+   - `resumo_camada_dialog_base.ui` → layout visual da interface
+3. Recarregue o plugin no QGIS para testar as alterações.
+
+## Autor
+
+**Leandro Eloi**
+
+- Email: leandroodev001@gmail.com
+
+## Licença
+
+Este projeto está licenciado sob os termos da **GNU General Public License (GPL v2 ou superior)**.
+
+## Contribuição
+
+Sugestões, melhorias e correções são bem-vindas.  
+Sinta-se à vontade para abrir uma issue ou enviar um pull request.
