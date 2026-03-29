@@ -141,11 +141,3 @@ Caso queira editar ou evoluir o plugin:
 
 - Email: leandroodev001@gmail.com
 
-## Licença
-
-Este projeto está licenciado sob os termos da **GNU General Public License (GPL v2 ou superior)**.
-
-## Contribuição
-
-Sugestões, melhorias e correções são bem-vindas.  
-Sinta-se à vontade para abrir uma issue ou enviar um pull request.
