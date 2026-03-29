@@ -26,27 +26,28 @@ import csv
 import os
 from datetime import datetime
 
-from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
-from qgis.PyQt.QtGui import QIcon, QFont, QColor
-from qgis.PyQt.QtWidgets import QAction, QMessageBox, QFileDialog
+from qgis.PyQt.QtCore import QCoreApplication, QSettings, QTranslator
+from qgis.PyQt.QtGui import QColor, QFont, QIcon
+from qgis.PyQt.QtWidgets import QAction, QFileDialog, QMessageBox
 
 from qgis.core import (
-    QgsProject,
-    QgsPrintLayout,
+    QgsCoordinateReferenceSystem,
+    QgsCoordinateTransform,
+    QgsFillSymbol,
+    QgsGeometry,
+    QgsLayoutExporter,
     QgsLayoutItemLabel,
     QgsLayoutItemMap,
+    QgsLayoutItemPage,
     QgsLayoutItemPicture,
     QgsLayoutPoint,
     QgsLayoutSize,
-    QgsLayoutExporter,
-    QgsUnitTypes,
     QgsMapLayerType,
-    QgsCoordinateReferenceSystem,
-    QgsCoordinateTransform,
-    QgsGeometry,
+    QgsPrintLayout,
+    QgsProject,
     QgsRectangle,
-    QgsFillSymbol,
-    QgsSingleSymbolRenderer
+    QgsSingleSymbolRenderer,
+    QgsUnitTypes,
 )
 
 from .resources import *
@@ -55,6 +56,10 @@ from .resumo_camada_dialog import ResumoCamadaDialog
 
 class ResumoCamada:
     """QGIS Plugin Implementation."""
+
+    PAGE_WIDTH_MM = 210.0
+    PAGE_HEIGHT_MM = 297.0
+    PAGE_MARGIN_MM = 15.0
 
     def __init__(self, iface):
         self.iface = iface
@@ -144,11 +149,49 @@ class ResumoCamada:
             return list(layer.selectedFeatures()), 'Feições selecionadas'
         return list(layer.getFeatures()), 'Todas as feições da camada'
 
-    def obter_crs_area(self, layer):
+    def obter_extent_feicoes(self, feicoes):
+        extent = None
+        for feat in feicoes:
+            if not feat.hasGeometry():
+                continue
+            geom = feat.geometry()
+            if not geom or geom.isEmpty():
+                continue
+            bbox = geom.boundingBox()
+            if extent is None:
+                extent = QgsRectangle(bbox)
+            else:
+                extent.combineExtentWith(bbox)
+        return extent
+
+    def transformar_extent_para_projeto(self, extent, origem_crs):
+        projeto = QgsProject.instance()
+        destino_crs = projeto.crs()
+
+        if extent is None:
+            return None
+
+        rect = QgsRectangle(extent)
+
+        if origem_crs == destino_crs:
+            return rect
+
+        try:
+            transform = QgsCoordinateTransform(origem_crs, destino_crs, projeto)
+            return transform.transformBoundingBox(rect)
+        except Exception:
+            return rect
+
+    def obter_crs_area(self, layer, feicoes):
         projeto = QgsProject.instance()
         crs_geo = QgsCoordinateReferenceSystem('EPSG:4326')
 
-        centro = layer.extent().center()
+        extent_ref = self.obter_extent_feicoes(feicoes)
+        if extent_ref is None or extent_ref.isEmpty():
+            extent_ref = layer.extent()
+
+        centro = extent_ref.center()
+
         if layer.crs() != crs_geo:
             transform = QgsCoordinateTransform(layer.crs(), crs_geo, projeto)
             centro = transform.transform(centro)
@@ -167,41 +210,66 @@ class ResumoCamada:
     def analisar_feicoes(self, layer):
         projeto = QgsProject.instance()
         crs_geo = QgsCoordinateReferenceSystem('EPSG:4326')
-        crs_area = self.obter_crs_area(layer)
 
         feicoes, escopo = self.obter_feicoes_relatorio(layer)
+        crs_area = self.obter_crs_area(layer, feicoes)
 
-        transform_area = QgsCoordinateTransform(layer.crs(), crs_area, projeto)
-        transform_geo = QgsCoordinateTransform(layer.crs(), crs_geo, projeto)
+        transform_area = None
+        transform_geo = None
+
+        if layer.crs() != crs_area:
+            transform_area = QgsCoordinateTransform(layer.crs(), crs_area, projeto)
+
+        if layer.crs() != crs_geo:
+            transform_geo = QgsCoordinateTransform(layer.crs(), crs_geo, projeto)
 
         detalhes = []
         area_total_m2 = 0.0
-        extent = None
+        extent_mapa = None
 
         for i, feat in enumerate(feicoes, start=1):
             if not feat.hasGeometry():
                 continue
 
             geom_original = QgsGeometry(feat.geometry())
-            bbox = geom_original.boundingBox()
+            if not geom_original or geom_original.isEmpty():
+                continue
 
-            if extent is None:
-                extent = QgsRectangle(bbox)
-            else:
-                extent.combineExtentWith(bbox)
+            bbox_mapa = self.transformar_extent_para_projeto(
+                geom_original.boundingBox(),
+                layer.crs()
+            )
+
+            if bbox_mapa is not None:
+                if extent_mapa is None:
+                    extent_mapa = QgsRectangle(bbox_mapa)
+                else:
+                    extent_mapa.combineExtentWith(bbox_mapa)
 
             area_m2 = 0.0
             perimetro_m = 0.0
 
             if layer.geometryType() == 2:
-                geom_area = QgsGeometry(feat.geometry())
-                geom_area.transform(transform_area)
+                geom_area = QgsGeometry(geom_original)
+                if transform_area is not None:
+                    geom_area.transform(transform_area)
                 area_m2 = abs(geom_area.area())
                 perimetro_m = abs(geom_area.length())
 
-            geom_geo = QgsGeometry(feat.geometry())
-            geom_geo.transform(transform_geo)
-            centroide = geom_geo.centroid().asPoint()
+            geom_geo = QgsGeometry(geom_original)
+            if transform_geo is not None:
+                geom_geo.transform(transform_geo)
+
+            centroide_geom = geom_geo.centroid()
+            if centroide_geom and not centroide_geom.isEmpty():
+                centroide = centroide_geom.asPoint()
+                centroide_lon = centroide.x()
+                centroide_lat = centroide.y()
+            else:
+                bbox_geo = geom_geo.boundingBox()
+                centro = bbox_geo.center()
+                centroide_lon = centro.x()
+                centroide_lat = centro.y()
 
             detalhes.append({
                 'indice': i,
@@ -212,10 +280,10 @@ class ResumoCamada:
                 'area_ha_txt': f"{self.formatar_numero_br(area_m2 / 10000.0, 4)} ha",
                 'area_km2_txt': f"{self.formatar_numero_br(area_m2 / 1000000.0, 6)} km²",
                 'perimetro_txt': f"{self.formatar_numero_br(perimetro_m, 2)} m",
-                'centroide_lon': centroide.x(),
-                'centroide_lat': centroide.y(),
-                'centroide_lat_txt': self.formatar_numero_br(centroide.y(), 6),
-                'centroide_lon_txt': self.formatar_numero_br(centroide.x(), 6)
+                'centroide_lon': centroide_lon,
+                'centroide_lat': centroide_lat,
+                'centroide_lat_txt': self.formatar_numero_br(centroide_lat, 6),
+                'centroide_lon_txt': self.formatar_numero_br(centroide_lon, 6)
             })
 
             area_total_m2 += area_m2
@@ -224,7 +292,7 @@ class ResumoCamada:
         if len(detalhes) >= 2:
             diff_m2 = abs(detalhes[0]['area_m2'] - detalhes[1]['area_m2'])
 
-        return detalhes, escopo, area_total_m2, diff_m2, extent
+        return detalhes, escopo, area_total_m2, diff_m2, extent_mapa
 
     def obter_resumo(self, layer):
         detalhes, escopo, area_total_m2, diff_m2, extent = self.analisar_feicoes(layer)
@@ -377,12 +445,54 @@ class ResumoCamada:
             return
 
         simbolo = QgsFillSymbol.createSimple({
-            'color': '255, 215, 64, 100',
-            'outline_color': '120, 80, 0, 255',
+            'color': '255,215,64,100',
+            'outline_color': '120,80,0,255',
             'outline_width': '0.9'
         })
         layer.setRenderer(QgsSingleSymbolRenderer(simbolo))
         layer.triggerRepaint()
+
+    def _page_y(self, pagina, y_local):
+        return (pagina * self.PAGE_HEIGHT_MM) + y_local
+
+    def _garantir_pagina(self, layout, indice_pagina):
+        while layout.pageCollection().pageCount() <= indice_pagina:
+            pagina = QgsLayoutItemPage(layout)
+            pagina.setPageSize('A4', QgsLayoutItemPage.Orientation.Portrait)
+            layout.pageCollection().addPage(pagina)
+
+    def _criar_label_layout(self, layout, texto, fonte, cor, x, y, largura=None):
+        label = QgsLayoutItemLabel(layout)
+        label.setText(texto)
+        label.setFont(fonte)
+        label.setFontColor(cor)
+        if largura:
+            label.attemptResize(QgsLayoutSize(largura, 200, QgsUnitTypes.LayoutMillimeters))
+        label.adjustSizeToText()
+        layout.addLayoutItem(label)
+        label.attemptMove(QgsLayoutPoint(x, y, QgsUnitTypes.LayoutMillimeters))
+        return label
+
+    def _obter_extent_mapa_pdf(self, layer, resumo):
+        extent = resumo.get('extent')
+        if extent is None or extent.isEmpty():
+            extent = self.transformar_extent_para_projeto(layer.extent(), layer.crs())
+
+        if extent is None or extent.isEmpty():
+            return None
+
+        extent_pdf = QgsRectangle(extent)
+
+        if extent_pdf.width() == 0:
+            extent_pdf.setXMinimum(extent_pdf.xMinimum() - 10)
+            extent_pdf.setXMaximum(extent_pdf.xMaximum() + 10)
+
+        if extent_pdf.height() == 0:
+            extent_pdf.setYMinimum(extent_pdf.yMinimum() - 10)
+            extent_pdf.setYMaximum(extent_pdf.yMaximum() + 10)
+
+        extent_pdf.scale(1.15)
+        return extent_pdf
 
     def exportar_pdf(self, layer, resumo):
         caminho_pdf, _ = QFileDialog.getSaveFileName(
@@ -398,159 +508,216 @@ class ResumoCamada:
         if not caminho_pdf.lower().endswith('.pdf'):
             caminho_pdf += '.pdf'
 
-        self.configurar_estilo_layer(layer)
+        renderer_original = None
+        if layer.renderer():
+            try:
+                renderer_original = layer.renderer().clone()
+            except Exception:
+                renderer_original = None
 
-        projeto = QgsProject.instance()
-        layout = QgsPrintLayout(projeto)
-        layout.initializeDefaults()
-        layout.setName(f"ResumoCamadaPDF_{resumo['nome_camada']}")
+        try:
+            self.configurar_estilo_layer(layer)
 
-        cor_principal = QColor(24, 91, 127)
-        cor_texto = QColor(55, 55, 55)
+            projeto = QgsProject.instance()
+            layout = QgsPrintLayout(projeto)
+            layout.initializeDefaults()
+            layout.setName(
+                f"ResumoCamadaPDF_{resumo['nome_camada']}_{datetime.now().strftime('%H%M%S')}"
+            )
 
-        logo_path = os.path.join(self.plugin_dir, 'icon.png')
-        if os.path.exists(logo_path):
-            logo = QgsLayoutItemPicture(layout)
-            logo.setPicturePath(logo_path)
-            logo.attemptMove(QgsLayoutPoint(12, 10, QgsUnitTypes.LayoutMillimeters))
-            logo.attemptResize(QgsLayoutSize(14, 14, QgsUnitTypes.LayoutMillimeters))
-            layout.addLayoutItem(logo)
+            self._garantir_pagina(layout, 0)
 
-        titulo = QgsLayoutItemLabel(layout)
-        titulo.setText('Resumo de Camada')
-        titulo.setFont(QFont('Arial', 18, QFont.Bold))
-        titulo.setFontColor(cor_principal)
-        titulo.adjustSizeToText()
-        titulo.attemptMove(QgsLayoutPoint(30, 10, QgsUnitTypes.LayoutMillimeters))
-        layout.addLayoutItem(titulo)
+            cor_principal = QColor(24, 91, 127)
+            cor_texto = QColor(55, 55, 55)
 
-        subtitulo = QgsLayoutItemLabel(layout)
-        subtitulo.setText(f"Relatório gerado em {resumo['data_exportacao']}")
-        subtitulo.setFont(QFont('Arial', 8))
-        subtitulo.setFontColor(cor_texto)
-        subtitulo.adjustSizeToText()
-        subtitulo.attemptMove(QgsLayoutPoint(30, 18, QgsUnitTypes.LayoutMillimeters))
-        layout.addLayoutItem(subtitulo)
+            pagina = 0
+            margem_x = self.PAGE_MARGIN_MM
 
-        resumo_titulo = QgsLayoutItemLabel(layout)
-        resumo_titulo.setText('Resumo geral')
-        resumo_titulo.setFont(QFont('Arial', 11, QFont.Bold))
-        resumo_titulo.setFontColor(cor_principal)
-        resumo_titulo.adjustSizeToText()
-        resumo_titulo.attemptMove(QgsLayoutPoint(15, 34, QgsUnitTypes.LayoutMillimeters))
-        layout.addLayoutItem(resumo_titulo)
+            logo_path = os.path.join(self.plugin_dir, 'icon.png')
+            if os.path.exists(logo_path):
+                logo = QgsLayoutItemPicture(layout)
+                logo.setPicturePath(logo_path)
+                layout.addLayoutItem(logo)
+                logo.attemptMove(QgsLayoutPoint(margem_x - 3, self._page_y(pagina, 10), QgsUnitTypes.LayoutMillimeters))
+                logo.attemptResize(QgsLayoutSize(14, 14, QgsUnitTypes.LayoutMillimeters))
 
-        bloco_resumo = QgsLayoutItemLabel(layout)
-        bloco_resumo.setText(self.resumo_texto(resumo))
-        bloco_resumo.setFont(QFont('Arial', 8))
-        bloco_resumo.adjustSizeToText()
-        bloco_resumo.attemptMove(QgsLayoutPoint(15, 42, QgsUnitTypes.LayoutMillimeters))
-        layout.addLayoutItem(bloco_resumo)
+            self._criar_label_layout(
+                layout,
+                'Resumo de Camada',
+                QFont('Arial', 18, QFont.Bold),
+                cor_principal,
+                margem_x + 15,
+                self._page_y(pagina, 10)
+            )
 
-        resumo_bottom = 42 + bloco_resumo.rect().height()
-        y_cards = resumo_bottom + 14
-        card1_x = 15
-        card2_x = 108
+            self._criar_label_layout(
+                layout,
+                f"Relatório gerado em {resumo['data_exportacao']}",
+                QFont('Arial', 8),
+                cor_texto,
+                margem_x + 15,
+                self._page_y(pagina, 18)
+            )
 
-        card1_bottom = y_cards
-        card2_bottom = y_cards
+            self._criar_label_layout(
+                layout,
+                'Resumo geral',
+                QFont('Arial', 11, QFont.Bold),
+                cor_principal,
+                margem_x,
+                self._page_y(pagina, 34)
+            )
 
-        if len(resumo['detalhes']) >= 1:
-            area1_titulo = QgsLayoutItemLabel(layout)
-            area1_titulo.setText(f"Área 1 (ID {resumo['detalhes'][0]['feature_id']})")
-            area1_titulo.setFont(QFont('Arial', 10, QFont.Bold))
-            area1_titulo.setFontColor(cor_principal)
-            area1_titulo.adjustSizeToText()
-            area1_titulo.attemptMove(QgsLayoutPoint(card1_x, y_cards, QgsUnitTypes.LayoutMillimeters))
-            layout.addLayoutItem(area1_titulo)
+            bloco_resumo = QgsLayoutItemLabel(layout)
+            bloco_resumo.setText(self.resumo_texto(resumo))
+            bloco_resumo.setFont(QFont('Arial', 8))
+            bloco_resumo.adjustSizeToText()
+            layout.addLayoutItem(bloco_resumo)
+            bloco_resumo.attemptMove(
+                QgsLayoutPoint(margem_x, self._page_y(pagina, 42), QgsUnitTypes.LayoutMillimeters)
+            )
 
-            area1_texto = QgsLayoutItemLabel(layout)
-            area1_texto.setText(self.texto_area_card(resumo['detalhes'][0]))
-            area1_texto.setFont(QFont('Arial', 8))
-            area1_texto.adjustSizeToText()
-            area1_texto.attemptMove(QgsLayoutPoint(card1_x, y_cards + 8, QgsUnitTypes.LayoutMillimeters))
-            layout.addLayoutItem(area1_texto)
+            resumo_bottom_local = 42 + bloco_resumo.rect().height()
+            detalhes = resumo['detalhes']
 
-            card1_bottom = (y_cards + 8) + area1_texto.rect().height()
+            cards_page = 0
+            cards_y_local = resumo_bottom_local + 14
+            row_height = 42
+            x_inicial = margem_x
+            largura_coluna = 85
+            espaco_x = 10
+            limite_cards_local = 250
 
-        if len(resumo['detalhes']) >= 2:
-            area2_titulo = QgsLayoutItemLabel(layout)
-            area2_titulo.setText(f"Área 2 (ID {resumo['detalhes'][1]['feature_id']})")
-            area2_titulo.setFont(QFont('Arial', 10, QFont.Bold))
-            area2_titulo.setFontColor(cor_principal)
-            area2_titulo.adjustSizeToText()
-            area2_titulo.attemptMove(QgsLayoutPoint(card2_x, y_cards, QgsUnitTypes.LayoutMillimeters))
-            layout.addLayoutItem(area2_titulo)
+            if detalhes:
+                linhas = [detalhes[i:i + 2] for i in range(0, len(detalhes), 2)]
 
-            area2_texto = QgsLayoutItemLabel(layout)
-            area2_texto.setText(self.texto_area_card(resumo['detalhes'][1]))
-            area2_texto.setFont(QFont('Arial', 8))
-            area2_texto.adjustSizeToText()
-            area2_texto.attemptMove(QgsLayoutPoint(card2_x, y_cards + 8, QgsUnitTypes.LayoutMillimeters))
-            layout.addLayoutItem(area2_texto)
+                for idx_linha, linha in enumerate(linhas):
+                    if cards_y_local + row_height > limite_cards_local:
+                        cards_page += 1
+                        self._garantir_pagina(layout, cards_page)
 
-            card2_bottom = (y_cards + 8) + area2_texto.rect().height()
+                        self._criar_label_layout(
+                            layout,
+                            'Áreas do relatório',
+                            QFont('Arial', 11, QFont.Bold),
+                            cor_principal,
+                            margem_x,
+                            self._page_y(cards_page, 15)
+                        )
+                        cards_y_local = 24
 
-        cards_bottom = max(card1_bottom, card2_bottom)
+                    for col, det in enumerate(linha):
+                        x = x_inicial + col * (largura_coluna + espaco_x)
+                        y = self._page_y(cards_page, cards_y_local)
 
-        y_mapa_titulo = cards_bottom + 12
-        y_mapa = y_mapa_titulo + 8
-        limite_rodape = 270
-        altura_disponivel = max(35, limite_rodape - y_mapa)
-        altura_mapa = min(70, altura_disponivel)
+                        self._criar_label_layout(
+                            layout,
+                            f"Área {det['indice']} (ID {det['feature_id']})",
+                            QFont('Arial', 10, QFont.Bold),
+                            cor_principal,
+                            x,
+                            y
+                        )
 
-        mapa_titulo = QgsLayoutItemLabel(layout)
-        mapa_titulo.setText('Mapa da área')
-        mapa_titulo.setFont(QFont('Arial', 11, QFont.Bold))
-        mapa_titulo.setFontColor(cor_principal)
-        mapa_titulo.adjustSizeToText()
-        mapa_titulo.attemptMove(QgsLayoutPoint(15, y_mapa_titulo, QgsUnitTypes.LayoutMillimeters))
-        layout.addLayoutItem(mapa_titulo)
+                        area_texto = QgsLayoutItemLabel(layout)
+                        area_texto.setText(self.texto_area_card(det))
+                        area_texto.setFont(QFont('Arial', 8))
+                        area_texto.adjustSizeToText()
+                        layout.addLayoutItem(area_texto)
+                        area_texto.attemptMove(
+                            QgsLayoutPoint(x, y + 8, QgsUnitTypes.LayoutMillimeters)
+                        )
 
-        mapa = QgsLayoutItemMap(layout)
-        mapa.attemptMove(QgsLayoutPoint(15, y_mapa, QgsUnitTypes.LayoutMillimeters))
-        mapa.attemptResize(QgsLayoutSize(180, altura_mapa, QgsUnitTypes.LayoutMillimeters))
-        mapa.setFrameEnabled(True)
+                    cards_y_local += row_height
+            else:
+                self._criar_label_layout(
+                    layout,
+                    'Nenhuma feição válida foi encontrada para o relatório.',
+                    QFont('Arial', 8),
+                    cor_texto,
+                    margem_x,
+                    self._page_y(cards_page, cards_y_local)
+                )
 
-        layers_canvas = list(self.iface.mapCanvas().layers())
-        if layers_canvas:
-            mapa.setLayers(layers_canvas)
-        else:
+            pagina_mapa = cards_page + 1
+            self._garantir_pagina(layout, pagina_mapa)
+
+            self._criar_label_layout(
+                layout,
+                'Mapa da área',
+                QFont('Arial', 11, QFont.Bold),
+                cor_principal,
+                margem_x,
+                self._page_y(pagina_mapa, 15)
+            )
+
+            self._criar_label_layout(
+                layout,
+                f"Camada: {resumo['nome_camada']}",
+                QFont('Arial', 8),
+                cor_texto,
+                margem_x,
+                self._page_y(pagina_mapa, 23)
+            )
+
+            mapa = QgsLayoutItemMap(layout)
+            layout.addLayoutItem(mapa)
+            mapa.attemptMove(
+                QgsLayoutPoint(margem_x, self._page_y(pagina_mapa, 32), QgsUnitTypes.LayoutMillimeters)
+            )
+            mapa.attemptResize(QgsLayoutSize(180, 165, QgsUnitTypes.LayoutMillimeters))
+            mapa.setFrameEnabled(True)
+
+            try:
+                mapa.setBackgroundEnabled(True)
+                mapa.setBackgroundColor(QColor(255, 255, 255))
+            except Exception:
+                pass
+
             mapa.setLayers([layer])
 
-        extent = resumo['extent'] if resumo['extent'] is not None else layer.extent()
-        if not extent.isEmpty():
-            extent.scale(1.10)
-            mapa.setExtent(extent)
+            try:
+                mapa.setKeepLayerSet(True)
+            except Exception:
+                pass
 
-        layout.addLayoutItem(mapa)
+            extent_pdf = self._obter_extent_mapa_pdf(layer, resumo)
+            if extent_pdf is not None:
+                mapa.setExtent(extent_pdf)
 
-        rodape = QgsLayoutItemLabel(layout)
-        rodape.setText('Plugin Resumo de Camada - Relatório automático QGIS')
-        rodape.setFont(QFont('Arial', 7))
-        rodape.setFontColor(cor_texto)
-        rodape.adjustSizeToText()
-        rodape.attemptMove(
-            QgsLayoutPoint(15, y_mapa + altura_mapa + 4, QgsUnitTypes.LayoutMillimeters)
-        )
-        layout.addLayoutItem(rodape)
+            mapa.refresh()
 
-        exporter = QgsLayoutExporter(layout)
-        settings = QgsLayoutExporter.PdfExportSettings()
-        resultado = exporter.exportToPdf(caminho_pdf, settings)
-
-        if resultado == QgsLayoutExporter.Success:
-            QMessageBox.information(
-                self.iface.mainWindow(),
-                'Resumo de Camada',
-                f'PDF exportado com sucesso:\n{caminho_pdf}'
+            rodape = QgsLayoutItemLabel(layout)
+            rodape.setText('Plugin Resumo de Camada - Relatório automático QGIS')
+            rodape.setFont(QFont('Arial', 7))
+            rodape.setFontColor(cor_texto)
+            rodape.adjustSizeToText()
+            layout.addLayoutItem(rodape)
+            rodape.attemptMove(
+                QgsLayoutPoint(margem_x, self._page_y(pagina_mapa, 282), QgsUnitTypes.LayoutMillimeters)
             )
-        else:
-            QMessageBox.critical(
-                self.iface.mainWindow(),
-                'Resumo de Camada',
-                'Falha ao exportar PDF.'
-            )
+
+            exporter = QgsLayoutExporter(layout)
+            settings = QgsLayoutExporter.PdfExportSettings()
+            resultado = exporter.exportToPdf(caminho_pdf, settings)
+
+            if resultado == QgsLayoutExporter.Success:
+                QMessageBox.information(
+                    self.iface.mainWindow(),
+                    'Resumo de Camada',
+                    f'PDF exportado com sucesso:\n{caminho_pdf}'
+                )
+            else:
+                QMessageBox.critical(
+                    self.iface.mainWindow(),
+                    'Resumo de Camada',
+                    'Falha ao exportar PDF.'
+                )
+
+        finally:
+            if renderer_original is not None:
+                layer.setRenderer(renderer_original)
+                layer.triggerRepaint()
 
     def run(self):
         layer = self.iface.activeLayer()
