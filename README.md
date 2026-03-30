@@ -32,6 +32,12 @@ O plugin possui uma interface gráfica no QGIS com:
   - Exportar PDF
   - Fechar
 
+## Demonstração
+
+### Tela inicial
+![Tela inicial](./assets/captura.png)
+
+
 ## Tecnologias utilizadas
 
 - Python 3
