@@ -34,8 +34,8 @@ O plugin possui uma interface gráfica no QGIS com:
 
 ## Demonstração
 
-### Tela inicial
-![Tela inicial](./assets/captura.png)
+### Tela Plugin
+![Tela Plugin](./assents/captura.png)
 
 
 ## Tecnologias utilizadas
