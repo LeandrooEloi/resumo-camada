@@ -48,6 +48,7 @@ O plugin possui uma interface gráfica no QGIS com:
 
 ```bash
 RESUMO_CAMADA/
+├── acentss
 ├── help/
 ├── i18n/
 ├── scripts/
